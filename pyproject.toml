@@ -1,7 +1,7 @@
 [project]
 name = "simple-snowflake-mcp"
-version = "0.2.0"
-description = "Simple Snowflake MCP Server to work behind a corporate proxy"
+version = "0.3.0"
+description = "Snowflake MCP Server — WSL/corporate-proxy friendly"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [
@@ -18,7 +18,6 @@ dependencies = [
     "mcp>=1.10.1",
     "snowflake-connector-python>=3.6.0",
     "python-dotenv>=1.0.0",
-    "pydantic>=2.0.0",
     "PyYAML>=6.0",
 ]
 
@@ -36,7 +35,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project.scripts]
-simple-snowflake-mcp = "simple_snowflake_mcp:main"
+simple-snowflake-mcp = "simple_snowflake_mcp:run"
 
 [tool.ruff]
 line-length = 100

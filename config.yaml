@@ -1,51 +1,13 @@
-# MCP Snowflake Server Configuration
-# This file contains configuration settings for the simple_snowflake_mcp server
-
-# Logging Configuration
+# simple_snowflake_mcp configuration
 logging:
-  # Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL
   level: INFO
-  # Log format (optional, uses default if not specified)
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  # Enable file logging (optional)
-  file_logging:
-    enabled: false
-    filename: "logs/server.log"
-    max_bytes: 10485760  # 10MB
-    backup_count: 5
 
-# Server Configuration
 server:
-  # Server name and version info
   name: "simple_snowflake_mcp"
-  version: "0.2.0"
-  description: "Enhanced Snowflake MCP Server with full protocol compliance"
-  
-  # Connection settings
-  connection:
-    # Test connection on startup
-    test_on_startup: true
-    # Connection timeout in seconds
-    timeout: 30
+  version: "0.3.0"
 
-# Snowflake Configuration (these can still be overridden by environment variables)
 snowflake:
-  # Read-only mode by default
   read_only: true
-  # Default query limit for safety
   default_query_limit: 1000
-  # Maximum query limit
   max_query_limit: 50000
-
-# MCP Protocol Settings
-mcp:
-  # Enable experimental features
-  experimental_features:
-    resource_subscriptions: true
-    completion_support: false  # Set to true when MCP version supports it
-  
-  # Notification settings
-  notifications:
-    resources_changed: true
-    tools_changed: true
-    prompts_changed: true
