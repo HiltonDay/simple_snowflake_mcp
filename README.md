@@ -14,6 +14,7 @@ A lightweight MCP server for Snowflake, designed for WSL environments with exter
 | `find-table` | Search for a table by name across databases. |
 | `find-column` | Find tables containing a column name (exact or partial match). |
 | `get-connection-info` | Show current user, role, database, schema, warehouse, and server version. |
+| `profile-table` | Statistical profile of a table using pandas `describe()`. Returns count, mean, std, min/max for numeric columns and count, unique, top, freq for string columns. Samples up to 100k rows. |
 
 ## Setup
 

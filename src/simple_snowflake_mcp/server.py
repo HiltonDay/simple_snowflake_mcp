@@ -24,6 +24,7 @@ import mcp.server.stdio
 import mcp.types as types
 import snowflake.connector
 import yaml
+import pandas as pd
 from dotenv import load_dotenv
 from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
@@ -213,6 +214,15 @@ class SnowflakeConnection:
                 rows = cur.fetchmany(MAX_QUERY_LIMIT)
                 data = [dict(zip(cols, r)) for r in rows]
                 logger.info("Query returned %d rows in %.2fs", len(data), elapsed)
+                # Echo results to console (stderr) for visibility
+                print(f"\n{'─'*80}", file=sys.stderr)
+                print(f"  Query ({len(data)} rows, {elapsed:.2f}s):", file=sys.stderr)
+                print(f"  {sql[:200]}{'...' if len(sql) > 200 else ''}", file=sys.stderr)
+                print(f"{'─'*80}", file=sys.stderr)
+                _print_table(cols, rows[:50], file=sys.stderr)
+                if len(data) > 50:
+                    print(f"  ... ({len(data) - 50} more rows)", file=sys.stderr)
+                print(file=sys.stderr)
             else:
                 data = [{"status": "success", "rows_affected": cur.rowcount}]
                 logger.info("Query executed in %.2fs", elapsed)
@@ -230,6 +240,17 @@ class SnowflakeConnection:
             except Exception:
                 pass
             self._conn = None
+
+    def fetch_dataframe(self, sql: str) -> pd.DataFrame:
+        """Execute a query and return results as a pandas DataFrame."""
+        conn = self._ensure_conn()
+        cur = conn.cursor()
+        if self.config.get("role"):
+            cur.execute(f"USE ROLE {self.config['role']}")
+        cur.execute(sql)
+        cols = [d[0] for d in cur.description]
+        rows = cur.fetchall()
+        return pd.DataFrame(rows, columns=cols)
 
 
 # ---------------------------------------------------------------------------
@@ -250,6 +271,23 @@ def _format_result(data: list[dict[str, Any]], fmt: str = "json") -> str:
     if fmt == "markdown":
         return _md_table(data)
     return json.dumps(data, indent=2, default=str)
+
+
+def _print_table(cols: list[str], rows: list[tuple], file=sys.stderr) -> None:
+    """Print a compact aligned table to the given file handle."""
+    str_rows = [[str(v) if v is not None else "" for v in r] for r in rows]
+    widths = [max(len(c), *(len(r[i]) for r in str_rows)) if str_rows else len(c) for i, c in enumerate(cols)]
+    # Cap column width to keep output readable
+    cap = 40
+    widths = [min(w, cap) for w in widths]
+    def _trunc(s, w):
+        return s[:w-1] + "…" if len(s) > w else s.ljust(w)
+    header = "  " + " │ ".join(_trunc(c, w) for c, w in zip(cols, widths))
+    sep = "  " + "─┼─".join("─" * w for w in widths)
+    print(header, file=file)
+    print(sep, file=file)
+    for r in str_rows:
+        print("  " + " │ ".join(_trunc(r[i], w) for i, w in enumerate(widths)), file=file)
 
 
 def _safe_identifier(name: str) -> str:
@@ -391,6 +429,34 @@ async def handle_list_tools() -> list[types.Tool]:
                 "additionalProperties": False,
             },
         ),
+        types.Tool(
+            name="profile-table",
+            description=(
+                "Statistical profile of a table using pandas describe(). "
+                "Returns count, unique, top, freq for string columns and "
+                "count, mean, std, min, 25%, 50%, 75%, max for numeric columns. "
+                "Samples up to 100k rows. Requires fully qualified name: db.schema.table"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "table": {
+                        "type": "string",
+                        "description": "Fully qualified table name (db.schema.table)",
+                        "minLength": 1,
+                    },
+                    "sample_size": {
+                        "type": "integer",
+                        "minimum": 100,
+                        "maximum": 100000,
+                        "default": 10000,
+                        "description": "Number of rows to sample (default 10000)",
+                    },
+                },
+                "required": ["table"],
+                "additionalProperties": False,
+            },
+        ),
     ]
 
 
@@ -486,6 +552,67 @@ async def handle_call_tool(
                 }
                 return [types.TextContent(type="text", text=json.dumps(info, indent=2, default=str))]
             return [types.TextContent(type="text", text=f"Error: {result['error']}")]
+
+        elif name == "profile-table":
+            table = args["table"]
+            for part in table.split("."):
+                _safe_identifier(part)
+            sample_size = min(args.get("sample_size", 10000), 100000)
+
+            t0 = time.time()
+            df = _db().fetch_dataframe(f"SELECT * FROM {table} TABLESAMPLE ({sample_size} ROWS)")
+            elapsed = time.time() - t0
+
+            # Build one-row-per-column profile
+            profile_rows = []
+            null_counts = df.isnull().sum()
+            null_pct = (null_counts / len(df) * 100).round(2)
+
+            for col in df.columns:
+                s = df[col]
+                row = {
+                    "column": col,
+                    "dtype": str(s.dtype),
+                    "non_null": int(s.count()),
+                    "null_count": int(null_counts[col]),
+                    "null_pct": float(null_pct[col]),
+                }
+                if pd.api.types.is_numeric_dtype(s):
+                    desc = s.describe()
+                    row.update({
+                        "mean": round(float(desc.get("mean", 0)), 4),
+                        "std": round(float(desc.get("std", 0)), 4),
+                        "min": desc.get("min"),
+                        "p25": desc.get("25%"),
+                        "p50": desc.get("50%"),
+                        "p75": desc.get("75%"),
+                        "max": desc.get("max"),
+                    })
+                else:
+                    row.update({
+                        "unique": int(s.nunique()),
+                        "top": str(s.mode().iloc[0]) if not s.mode().empty else "",
+                        "top_freq": int(s.value_counts().iloc[0]) if not s.value_counts().empty else 0,
+                    })
+                profile_rows.append(row)
+
+            profile_df = pd.DataFrame(profile_rows).fillna("")
+
+            sections = [
+                f"Table: {table}",
+                f"Sampled rows: {len(df)} (requested {sample_size}) in {elapsed:.2f}s",
+                f"Columns: {len(df.columns)}",
+                "",
+                profile_df.to_string(index=False),
+            ]
+
+            output = "\n".join(sections)
+            print(f"\n{'─'*80}", file=sys.stderr)
+            print(f"  profile-table: {table}", file=sys.stderr)
+            print(f"{'─'*80}", file=sys.stderr)
+            print(output, file=sys.stderr)
+            print(file=sys.stderr)
+            return [types.TextContent(type="text", text=output)]
 
         else:
             return [types.TextContent(type="text", text=f"Unknown tool: {name}")]
