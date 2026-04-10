@@ -1,12 +1,11 @@
 """
-Snowflake MCP Server — consolidated from simple_snowflake_mcp + snowflake server.
+Snowflake MCP Server for kiro-cli.
 
 Features:
 - Persistent connection with automatic reconnect
 - Read-only mode with SQL injection protection
 - WSL-compatible externalbrowser auth (auto-opens Windows browser)
-- Parameterized queries where possible, allowlist-based write protection
-- Configurable via config.yaml + env vars
+- Identifier validation on all user-supplied names
 """
 
 import asyncio
@@ -17,14 +16,11 @@ import re
 import sys
 import time
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 import mcp.server.stdio
 import mcp.types as types
 import snowflake.connector
-import yaml
-from dotenv import load_dotenv
 from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 
@@ -32,80 +28,39 @@ from mcp.server.models import InitializationOptions
 if not os.environ.get("BROWSER"):
     os.environ["BROWSER"] = "xdg-open"
 
-load_dotenv()
-
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
-def load_config() -> dict[str, Any]:
-    config_file = os.getenv("CONFIG_FILE", "config.yaml")
-    config_path = Path(__file__).parent.parent.parent / config_file
-    default: dict[str, Any] = {
-        "logging": {
-            "level": "INFO",
-            "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        },
-        "server": {
-            "name": "simple_snowflake_mcp",
-            "version": "0.3.0",
-        },
-        "snowflake": {
-            "read_only": True,
-            "default_query_limit": 1000,
-            "max_query_limit": 50000,
-        },
-    }
-    try:
-        if config_path.exists():
-            with open(config_path, encoding="utf-8") as f:
-                loaded = yaml.safe_load(f) or {}
-
-            def _merge(base: dict, override: dict) -> dict:
-                for k, v in override.items():
-                    if k in base and isinstance(base[k], dict) and isinstance(v, dict):
-                        _merge(base[k], v)
-                    else:
-                        base[k] = v
-                return base
-
-            return _merge(default, loaded)
-    except Exception as e:
-        print(f"Config load error: {e}, using defaults", file=sys.stderr)
-    return default
-
-
-CONFIG = load_config()
+SERVER_NAME = "simple_snowflake_mcp"
+SERVER_VERSION = "0.3.1"
+DEFAULT_QUERY_LIMIT = 1000
+MAX_QUERY_LIMIT = 50000
 
 logging.basicConfig(
-    level=getattr(logging, CONFIG["logging"].get("level", "INFO").upper(), logging.INFO),
-    format=CONFIG["logging"].get("format", "%(asctime)s - %(name)s - %(levelname)s - %(message)s"),
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     force=True,
 )
-# Keep snowflake connector quiet unless we're debugging
 logging.getLogger("snowflake.connector").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 MCP_READ_ONLY = os.getenv(
     "MCP_READ_ONLY",
-    os.getenv("SNOWFLAKE_READ_ONLY", str(CONFIG["snowflake"]["read_only"])),
+    os.getenv("SNOWFLAKE_READ_ONLY", "true"),
 ).lower() == "true"
-DEFAULT_QUERY_LIMIT = CONFIG["snowflake"]["default_query_limit"]
-MAX_QUERY_LIMIT = CONFIG["snowflake"]["max_query_limit"]
 
 
 # ---------------------------------------------------------------------------
 # Snowflake connection (persistent, auto-reconnect)
 # ---------------------------------------------------------------------------
 
-# Write-operation keywords (blocked in read-only mode)
 _WRITE_OPS = frozenset([
     "INSERT", "UPDATE", "DELETE", "MERGE", "TRUNCATE",
     "CREATE", "DROP", "ALTER", "GRANT", "REVOKE",
 ])
 
-# Read-only allowed first keywords
 _READ_OPS = frozenset(["SELECT", "SHOW", "DESCRIBE", "DESC", "EXPLAIN", "WITH", "LIST"])
 
 
@@ -125,7 +80,6 @@ class SnowflakeConnection:
     def __init__(self) -> None:
         self._conn: snowflake.connector.SnowflakeConnection | None = None
 
-        # Build config from env — support both SNOWFLAKE_WAREHOUSE and SNOWFLAKE_WH etc.
         self.config: dict[str, Any] = {
             "user": os.getenv("SNOWFLAKE_USER"),
             "account": os.getenv("SNOWFLAKE_ACCOUNT"),
@@ -156,7 +110,6 @@ class SnowflakeConnection:
         if missing:
             raise ValueError(f"Missing required env vars: {missing}")
 
-        # Sanitised config for logging (no passwords/tokens)
         safe = {k: v for k, v in self.config.items() if k not in ("password", "token")}
         logger.info("Snowflake config: %s | read_only=%s", safe, MCP_READ_ONLY)
 
@@ -253,7 +206,6 @@ def _format_result(data: list[dict[str, Any]], fmt: str = "json") -> str:
 
 
 def _safe_identifier(name: str) -> str:
-    """Validate a Snowflake identifier to prevent injection."""
     if not re.match(r"^[A-Za-z_][A-Za-z0-9_$.]*$", name):
         raise ValueError(f"Invalid identifier: {name}")
     return name
@@ -263,7 +215,7 @@ def _safe_identifier(name: str) -> str:
 # MCP Server
 # ---------------------------------------------------------------------------
 
-server = Server("simple_snowflake_mcp")
+server = Server(SERVER_NAME)
 db: SnowflakeConnection | None = None
 
 
@@ -410,7 +362,6 @@ async def handle_call_tool(
             if MCP_READ_ONLY and kw not in _READ_OPS:
                 return [types.TextContent(type="text", text=f"Blocked: '{kw}' not allowed in read-only mode.")]
 
-            # Auto-append LIMIT for SELECT without one
             if kw == "SELECT" and "LIMIT" not in sql.upper():
                 sql += f" LIMIT {limit}"
 
@@ -446,7 +397,6 @@ async def handle_call_tool(
 
         elif name == "describe-table":
             table = args["table"]
-            # Validate each part of a potentially qualified name
             for part in table.split("."):
                 _safe_identifier(part)
             result = _db().execute(f"DESCRIBE TABLE {table}")
@@ -481,7 +431,7 @@ async def handle_call_tool(
                 info = {
                     "connection": result["data"][0] if result["data"] else {},
                     "read_only_mode": MCP_READ_ONLY,
-                    "server_version": CONFIG["server"]["version"],
+                    "server_version": SERVER_VERSION,
                     "timestamp": datetime.now().isoformat(),
                 }
                 return [types.TextContent(type="text", text=json.dumps(info, indent=2, default=str))]
@@ -490,7 +440,6 @@ async def handle_call_tool(
         else:
             return [types.TextContent(type="text", text=f"Unknown tool: {name}")]
 
-        # Default result handler for tools that set `result`
         if result["success"]:
             return [types.TextContent(type="text", text=_format_result(result["data"]))]
         return [types.TextContent(type="text", text=f"Error: {result['error']}")]
@@ -507,15 +456,15 @@ async def handle_call_tool(
 # ---------------------------------------------------------------------------
 
 async def main() -> None:
-    logger.info("Starting %s v%s", CONFIG["server"]["name"], CONFIG["server"]["version"])
+    logger.info("Starting %s v%s", SERVER_NAME, SERVER_VERSION)
 
     async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
         await server.run(
             read_stream,
             write_stream,
             InitializationOptions(
-                server_name=CONFIG["server"]["name"],
-                server_version=CONFIG["server"]["version"],
+                server_name=SERVER_NAME,
+                server_version=SERVER_VERSION,
                 capabilities=server.get_capabilities(
                     notification_options=NotificationOptions(),
                     experimental_capabilities={},

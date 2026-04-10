@@ -1,9 +1,0 @@
-{
-  "servers": {
-    "simple-snowflake-mcp": {
-      "type": "stdio",
-      "command": "uv",
-      "args": ["run", "simple-snowflake-mcp"]
-    }
-  }
-}

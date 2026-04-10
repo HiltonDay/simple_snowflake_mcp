@@ -1,161 +1,58 @@
 # Simple Snowflake MCP Server
 
-A lightweight MCP server for Snowflake, designed for WSL environments with externalbrowser (SSO) authentication. Read-only by default with SQL injection protection.
+Snowflake MCP server for kiro-cli. Read-only by default, WSL externalbrowser (SSO) auth.
 
 ## Tools
 
 | Tool | Description |
 |---|---|
-| `execute-query` | Execute SQL (SELECT, SHOW, DESCRIBE, EXPLAIN, WITH). Auto-appends LIMIT. Output as JSON or markdown. |
-| `list-databases` | List accessible databases. Optional LIKE pattern filter. |
-| `list-schemas` | List schemas in a database (or current database if omitted). |
+| `execute-query` | Execute SQL (SELECT, SHOW, DESCRIBE, EXPLAIN, WITH). Auto-appends LIMIT. |
+| `list-databases` | List accessible databases. Optional LIKE pattern. |
+| `list-schemas` | List schemas in a database. |
 | `list-tables` | List tables in a database/schema. |
-| `describe-table` | Get column details for a table (supports fully qualified names). |
+| `describe-table` | Column details for a table (supports fully qualified names). |
 | `find-table` | Search for a table by name across databases. |
-| `find-column` | Find tables containing a column name (exact or partial match). |
-| `get-connection-info` | Show current user, role, database, schema, warehouse, and server version. |
+| `find-column` | Find tables containing a column name (exact or partial). |
+| `get-connection-info` | Current user, role, database, schema, warehouse. |
 
-## Setup
+## Configuration
 
-### Prerequisites
+All config is via environment variables, set in `launch_mcp.sh`:
 
-- Python 3.10+
-- [uv](https://docs.astral.sh/uv/) package manager
-- Snowflake account with externalbrowser auth (or password auth)
+| Variable | Required | Default |
+|---|---|---|
+| `SNOWFLAKE_USER` | Yes | — |
+| `SNOWFLAKE_ACCOUNT` | Yes | — |
+| `SNOWFLAKE_AUTHENTICATOR` | No | `externalbrowser` |
+| `SNOWFLAKE_ROLE` | No | — |
+| `SNOWFLAKE_WH` / `SNOWFLAKE_WAREHOUSE` | No | — |
+| `SNOWFLAKE_DB` / `SNOWFLAKE_DATABASE` | No | — |
+| `SNOWFLAKE_SCHEMA` | No | — |
+| `SNOWFLAKE_READ_ONLY` / `MCP_READ_ONLY` | No | `true` |
 
-### Install
+## kiro-cli Integration
 
-```bash
-git clone <repo-url>
-cd simple_snowflake_mcp
-uv sync
-```
-
-### Configure
-
-Copy `.env.example` to `.env` and fill in your credentials:
-
-```bash
-cp .env.example .env
-```
-
-Required variables:
-- `SNOWFLAKE_USER` — your Snowflake username
-- `SNOWFLAKE_ACCOUNT` — your Snowflake account identifier
-
-Optional variables:
-- `SNOWFLAKE_AUTHENTICATOR` — auth method (default: `externalbrowser`)
-- `SNOWFLAKE_PASSWORD` — only needed for password auth
-- `SNOWFLAKE_ROLE` — Snowflake role to use
-- `SNOWFLAKE_WAREHOUSE` / `SNOWFLAKE_WH` — warehouse name
-- `SNOWFLAKE_DATABASE` / `SNOWFLAKE_DB` — default database
-- `SNOWFLAKE_SCHEMA` — default schema
-- `SNOWFLAKE_READ_ONLY` / `MCP_READ_ONLY` — read-only mode (default: `true`)
-
-### Server Configuration
-
-Edit `config.yaml` to customise logging, query limits, etc.:
-
-```yaml
-logging:
-  level: INFO
-  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-
-server:
-  name: "simple_snowflake_mcp"
-  version: "0.3.0"
-
-snowflake:
-  read_only: true
-  default_query_limit: 1000
-  max_query_limit: 50000
-```
-
-Override the config file path with `CONFIG_FILE=custom_config.yaml`.
-
-## Usage
-
-### Run directly
-
-```bash
-uv run simple-snowflake-mcp
-```
-
-### MCP client configuration
-
-#### VS Code
-
-Already configured in `.vscode/mcp.json`:
-
-```json
-{
-  "servers": {
-    "simple-snowflake-mcp": {
-      "type": "stdio",
-      "command": "uv",
-      "args": ["run", "simple-snowflake-mcp"]
-    }
-  }
-}
-```
-
-#### Claude Desktop
+`~/.kiro/settings/mcp.json`:
 
 ```json
 {
   "mcpServers": {
     "simple_snowflake_mcp": {
-      "command": "uv",
-      "args": ["--directory", "/path/to/simple_snowflake_mcp", "run", "simple-snowflake-mcp"]
+      "command": "wsl.exe",
+      "args": ["--", "/home/hiltond/ai_coding/mcp/simple_snowflake_mcp/launch_mcp.sh"]
     }
   }
 }
-```
-
-#### Kiro CLI
-
-Add to your `~/.kiro/settings/mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "snowflake": {
-      "command": "uv",
-      "args": ["--directory", "/path/to/simple_snowflake_mcp", "run", "simple-snowflake-mcp"]
-    }
-  }
-}
-```
-
-### Debugging
-
-```bash
-npx @modelcontextprotocol/inspector uv run simple-snowflake-mcp
 ```
 
 ## Development
 
 ```bash
-# Install with dev dependencies
-uv sync --all-extras
-
-# Lint
-make lint
-
-# Format
-make format
-
-# See all commands
-make help
+uv sync          # install deps
+make run         # start server
+make clean       # remove generated files
 ```
-
-## Security
-
-- Read-only mode enabled by default — blocks INSERT, UPDATE, DELETE, CREATE, DROP, ALTER, GRANT, REVOKE
-- SQL injection protection via identifier validation
-- Passwords/tokens excluded from log output
-- WSL-compatible: auto-sets `BROWSER=xdg-open` for SSO flow
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT
