@@ -117,6 +117,7 @@ class SnowflakeConnection:
         conn = snowflake.connector.connect(
             **{k: v for k, v in self.config.items() if v is not None},
             client_session_keep_alive=True,
+            client_store_temporary_credential=True,
             network_timeout=30,
             login_timeout=120,
         )
