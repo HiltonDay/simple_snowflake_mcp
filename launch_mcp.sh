@@ -29,6 +29,7 @@ export SNOWFLAKE_READ_ONLY="true"
 
 # --- Launch ---
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+WORKSPACE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 export PYTHONPATH="$SCRIPT_DIR/src"
 cd "$SCRIPT_DIR"
-exec "$SCRIPT_DIR/.venv/bin/python" -m simple_snowflake_mcp
+exec "$WORKSPACE_DIR/.venv/bin/python" -m simple_snowflake_mcp
